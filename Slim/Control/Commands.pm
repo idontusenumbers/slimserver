@@ -1829,7 +1829,7 @@ sub playlistcontrolCommand {
 	my $client              = $request->client();
 	my $cmd                 = $request->getParam('cmd');
 	my $jumpIndex           = $request->getParam('play_index');
-
+	
 	if (Slim::Music::Import->stillScanning()) {
 		$request->addResult('rescan', "1");
 	}
@@ -1942,11 +1942,15 @@ sub playlistcontrolCommand {
 
 			$cmd .= "tracks";
 
+			my $library_id = Slim::Music::VirtualLibraries->getRealId($request->getParam('library_id')) || Slim::Music::VirtualLibraries->getLibraryIdForClient($client);
+			my $query = 'playlist.id=' . $playlist_id;
+			$query   .= '&library_id=' . $library_id if $library_id;
+			
 			Slim::Control::Request::executeRequest(
-				$client, ['playlist', $cmd, 'playlist.id=' . $playlist_id, undef, undef, $jumpIndex]
+				$client, ['playlist', $cmd, $query, undef, undef, $jumpIndex]
 			);
 
-			$request->addResult( 'count', $playlist->tracks->count() );
+			$request->addResult( 'count', $playlist->tracks($library_id)->count() );
 
 			$request->setStatusDone();
 			
@@ -2189,7 +2193,7 @@ sub playlistsEditCommand {
 			if ($title) {
 				$playlistTrack->title($title);
 				$playlistTrack->titlesort(Slim::Utils::Text::ignoreCaseArticles($title));
-				$playlistTrack->titlesearch(Slim::Utils::Text::ignoreCaseArticles($title, 1));
+				$playlistTrack->titlesearch(Slim::Utils::Text::ignoreCase($title, 1));
 			}
 
 			$playlistTrack->update;
@@ -2415,7 +2419,7 @@ sub playlistsRenameCommand {
 		$playlistObj->set_column('urlmd5', md5_hex($newUrl));
 		$playlistObj->set_column('title', $newName);
 		$playlistObj->set_column('titlesort', Slim::Utils::Text::ignoreCaseArticles($newName));
-		$playlistObj->set_column('titlesearch', Slim::Utils::Text::ignoreCaseArticles($newName, 1));
+		$playlistObj->set_column('titlesearch', Slim::Utils::Text::ignoreCase($newName, 1));
 		$playlistObj->update;
 
 		if (!defined Slim::Formats::Playlists::M3U->write( 
@@ -2585,9 +2589,7 @@ sub rescanCommand {
 	
 	if ( $mode eq 'external' ) {
 		# The old way of rescanning using scanner.pl
-		my %args = (
-			cleanup => 1,
-		);
+		my %args = ();
 
 		if ($originalMode eq 'playlists') {
 			$args{playlists} = 1;
@@ -3303,6 +3305,9 @@ sub _playlistXtracksCommand_parseSearchTerms {
 				$terms->{$key} = $value;
 
 			}
+			elsif ($term =~ /^(library_id)=(.*)/) {
+				$terms->{'librarytracks.library'} = URI::Escape::uri_unescape($2);
+			}
 		}
 	}
 
@@ -3393,7 +3398,7 @@ sub _playlistXtracksCommand_parseSearchTerms {
 
 			} else {
 
-				$find{$key} = Slim::Utils::Text::ignoreCaseArticles($value, 1);
+				$find{$key} = Slim::Utils::Text::ignoreCase($value, 1);
 			}
 		}
 	}
@@ -3408,7 +3413,7 @@ sub _playlistXtracksCommand_parseSearchTerms {
 
 			$client->currentPlaylist($playlist) if $cmd && $cmd =~ /^(?:play|load)/;
 
-			return $playlist->tracks;
+			return $playlist->tracks($library_id);
 		}
 
 		return ();

@@ -3,8 +3,6 @@ package Slim::Plugin::FullTextSearch::Plugin;
 use strict;
 use Tie::Cache::LRU::Expires;
 
-use Slim::Control::Queries;
-use Slim::Control::Request;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Scanner::API;
@@ -23,7 +21,7 @@ use constant SQL_CREATE_TRACK_ITEM => q{
 		IFNULL(tracks.year, '') || ' ' || GROUP_CONCAT(albums.title, ' ') || ' ' || GROUP_CONCAT(albums.titlesearch, ' ') || ' ' || GROUP_CONCAT(genres.name, ' ') || ' ' || GROUP_CONCAT(genres.namesearch, ' '),
 		-- weight 3 - contributors create multiple hits, therefore only w3
 		CONCAT_CONTRIBUTOR_ROLE(tracks.id, GROUP_CONCAT(contributor_track.contributor, ','), 'contributor_track') || ' ' || 
-		IGNORE_CASE_ARTICLES(comments.value) || ' ' || IGNORE_CASE_ARTICLES(tracks.lyrics) || ' ' || IFNULL(tracks.content_type, '') || ' ' || CASE WHEN tracks.channels = 1 THEN 'mono' WHEN tracks.channels = 2 THEN 'stereo' END,
+		IGNORE_CASE(comments.value) || ' ' || IGNORE_CASE(tracks.lyrics) || ' ' || IFNULL(tracks.content_type, '') || ' ' || CASE WHEN tracks.channels = 1 THEN 'mono' WHEN tracks.channels = 2 THEN 'stereo' END,
 		-- weight 1
 		printf('%%i', tracks.bitrate) || ' ' || printf('%%ikbps', tracks.bitrate / 1000) || ' ' || IFNULL(tracks.samplerate, '') || ' ' || (round(tracks.samplerate, 0) / 1000) || ' ' || IFNULL(tracks.samplesize, '') || ' ' || replace(replace(tracks.url, '%%20', ' '), 'file://', '')
 		 
@@ -101,15 +99,12 @@ sub initPlugin {
 		'use'          => 1,
 	});
 
-	my $dbh = _dbh();
-
 	# no need to continue in scanner mode
 	return if main::SCANNER;
 
-	# XXXX - need some method to trigger re-build when user uses eg. BMF to add new music
 	Slim::Control::Request::subscribe( sub {
 		$prefs->remove('popularTerms');
-		_initPopularTerms();
+		_initPopularTerms(1);
 		%ftsCache = ();
 	}, [['rescan'], ['done']] );
 
@@ -118,16 +113,6 @@ sub initPlugin {
 
 	# don't continue if the library hasn't been initialized yet, or if a schema change is going to trigger a rescan anyway
 	return unless Slim::Schema->hasLibrary() && !Slim::Schema->schemaUpdated;
-		
-	my ($ftExists) = $dbh->selectrow_array( qq{ SELECT name FROM sqlite_master WHERE type='table' AND name='fulltext' } );
-	($ftExists) = $dbh->selectrow_array( qq{ SELECT name FROM sqlite_master WHERE type='table' AND name='fulltext_terms' } ) if $ftExists;
-	
-	if (!$ftExists) {
-		$scanlog->error("Fulltext index missing or outdated - re-building");
-		
-		$prefs->remove('popularTerms');
-		_rebuildIndex();
-	}
 
 	_initPopularTerms();
 }
@@ -153,7 +138,7 @@ sub startScan {
 sub checkSingleTrack {
 	my ( $trackObj, $url ) = @_;
 	
-	return unless $trackObj->id;
+	return if $trackObj->remote || !$trackObj->id;
 	
 	my $dbh = _dbh();
 
@@ -379,7 +364,7 @@ sub _getAlbumTracksInfo {
 	# XXX - should we include artist information?
 	my $sth = $dbh->prepare_cached(qq{
 		SELECT IFNULL(tracks.title, '') || ' ' || IFNULL(tracks.titlesearch, '') || ' ' || IFNULL(tracks.customsearch, '') || ' ' || 
-			IFNULL(tracks.musicbrainz_id, '') || ' ' || IGNORE_CASE_ARTICLES(tracks.lyrics) || ' ' || IGNORE_CASE_ARTICLES(comments.value) 
+			IFNULL(tracks.musicbrainz_id, '') || ' ' || IGNORE_CASE(tracks.lyrics) || ' ' || IGNORE_CASE(comments.value) 
 		FROM tracks 
 		LEFT JOIN comments ON comments.track = tracks.id
 		WHERE tracks.album = ?
@@ -394,12 +379,12 @@ sub _getAlbumTracksInfo {
 	$trackInfo;
 }
 
-sub _ignoreCaseArticles {
+sub _ignoreCase {
 	my ($text) = @_;
 	
 	return '' unless $text;
 	
-	return $text . ' ' . Slim::Utils::Text::ignoreCaseArticles($text, 1);
+	return $text . ' ' . Slim::Utils::Text::ignoreCase($text, 1);
 }
 
 sub _rebuildIndex {
@@ -498,10 +483,23 @@ sub _rebuildIndex {
 }
 
 sub _initPopularTerms {
+	my $scanDone = shift;
 	
 	return if ($popularTerms = join('|', @{ $prefs->get('popularTerms') || [] }));
 
 	main::DEBUGLOG && $log->is_debug && $log->debug("Analyzing most popular tokens");
+		
+	my $dbh = _dbh();
+	
+	my ($ftExists) = $dbh->selectrow_array( qq{ SELECT name FROM sqlite_master WHERE type='table' AND name='fulltext' } );
+	($ftExists) = $dbh->selectrow_array( qq{ SELECT name FROM sqlite_master WHERE type='table' AND name='fulltext_terms' } ) if $ftExists;
+	
+	if (!$ftExists) {
+		$scanlog->error("Fulltext index missing or outdated - re-building");
+		
+		$prefs->remove('popularTerms');
+		_rebuildIndex() unless $scanDone;
+	}
 
 	# get a list of terms which occur more than LARGE_RESULTSET times in our database
 	my $terms = _dbh()->selectcol_arrayref( sprintf(qq{
@@ -528,7 +526,7 @@ sub _dbh {
 	$dbh->sqlite_create_function( 'FULLTEXTWEIGHT', 1, \&_getWeight );
 	$dbh->sqlite_create_function( 'CONCAT_CONTRIBUTOR_ROLE', 3, \&_getContributorRole );
 	$dbh->sqlite_create_function( 'CONCAT_ALBUM_TRACKS_INFO', 1, \&_getAlbumTracksInfo );
-	$dbh->sqlite_create_function( 'IGNORE_CASE_ARTICLES', 1, \&_ignoreCaseArticles);
+	$dbh->sqlite_create_function( 'IGNORE_CASE', 1, \&_ignoreCase);
 	
 	# XXX - printf is only available in SQLite 3.8.3+
 	$dbh->sqlite_create_function( 'printf', 2, sub { sprintf(shift, shift); } );

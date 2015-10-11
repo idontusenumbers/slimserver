@@ -177,6 +177,8 @@ sub dirsFor {
 			};
 		}
 		
+		return unless $updateDir;
+		
 		mkdir $updateDir unless -d $updateDir;
 		push @dirs, $updateDir;
 	}
@@ -466,5 +468,9 @@ sub restartServer { 0 }
 sub canRestartServer { 0 }
 
 sub progressJSON { }
+
+sub runningFromSource {
+	$::REVISION =~ /^\s*\d+\s*$/ ? 0 : 1;
+}
 
 1;

@@ -114,9 +114,9 @@ sub getFeedAsync {
 	);
 
 	if ( $url =~ /(?:radiotime|tunein\.com)/ ) {
-		# Add the RadioTime username
+		# Add the TuneIn username
 		if ( $url !~ /username/ && $url =~ /(?:presets|title)/ 
-			&& ( my $username = Slim::Plugin::RadioTime::Plugin->getUsername($params->{client}) )
+			&& ( my $username = Slim::Plugin::InternetRadio::TuneIn->getUsername($params->{client}) )
 		) {
 			$url .= '&username=' . uri_escape_utf8($username);
 		}
@@ -611,7 +611,7 @@ sub xmlToHash {
 	my $timeout = preferences('server')->get('remotestreamtimeout') * 2;
 
 	# Bug 3510 - check for bogus content.
-	if ($$content !~ /<\??(?:xml|rss)/) {
+	if ($$content !~ /<\??(?:xml|rss|opml)/) {
 
 		# Set $@, so the block below will catch it.
 		$@ = "Invalid XML feed\n";

@@ -132,7 +132,7 @@ sub add {
 
 		# Bug 10324, we now match only the exact name
 		my $name   = $artistList[$i];
-		my $search = Slim::Utils::Text::ignoreCaseArticles($name, 1);
+		my $search = Slim::Utils::Text::ignoreCase($name, 1);
 		my $sort   = Slim::Utils::Text::ignoreCaseArticles(($sortedList[$i] || $name));
 		my $mbid   = $brainzIDList[$i];
 		
@@ -153,7 +153,7 @@ sub add {
 		}
 		else {
 			# Bug 3069: update the namesort only if it's different than namesearch
-			if ( $search ne $sort ) {
+			if ( $search ne Slim::Utils::Unicode::utf8toLatin1Transliterate($sort) ) {
 				$sth = $dbh->prepare_cached('UPDATE contributors SET namesort = ? WHERE id = ?');
 				$sth->execute( $sort, $id );
 			}
